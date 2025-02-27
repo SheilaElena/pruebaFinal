@@ -1,0 +1,48 @@
+version: '3.8'
+
+
+services:
+  db:
+    image: mysql:latest
+    container_name: mysql-db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: "proyectose@"
+      MYSQL_DATABASE: "bd_keyloggers"
+      MYSQL_USER: "sea"
+      MYSQL_PASSWORD: "proyectose@"
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d  # Cargar estructura inicial de BD
+
+  web:
+    container_name: web_phishing
+    build: ./python  # Tu primer servidor Flask
+    restart: always
+    depends_on:
+      - db
+    expose:
+      - "5000:5000"
+
+ # web2:
+ #   container_name: web_datos
+ #   build: ./otra_web  # Otro servidor Flask si lo necesitas
+ #   restart: always
+ #   depends_on:
+ #     - db
+ #   expose:
+ #     - "5001:5001"
+
+  nginx:
+    image: nginx:latest
+    restart: always
+    depends_on:
+    - web
+    # - web2
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+
+
