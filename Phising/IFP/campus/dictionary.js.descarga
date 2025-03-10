@@ -1,0 +1,59 @@
+﻿const languages = {
+    "es_ES" :{
+        "helpUrl": "mailto:soporte.campus@ifp.es",
+        "helpText": "¿Necesitas ayuda?",
+        "footer1Link": "https://www.ifp.es/landing/oferta-formativa",
+        "footer1Text": "Oferta Formativa",
+        "footer2Link": "https://www.ifp.es/proyectos-alumnos",
+        "footer2Text": "Proyectos de Alumnos",
+        "footer3Link": "https://www.ifp.es/empleos-fp",
+        "footer3Text": "Conoce iFP",
+        "footer4Link": "",
+        "footer4Text": "",
+        "footeradminText": ""
+    }/*,
+    "en_US":{
+        "helpUrl": "",
+        "helpText": "",
+        "footer1Link": "",
+        "footer1Text": "",
+        "footer2Link": "",
+        "footer2Text": "",
+        "footer3Link": "",
+        "footer3Text": "",
+        "footer4Link": "",
+        "footer4Text": "",
+        "footeradminText": ""
+    }*/
+}
+const mods = {
+    "faviconHref" : "/bbcswebdav/institution/branding/IFP/favicon.ico",
+    "htmlTitle" : "Campus virtual | iFP",
+    "pagebodyBackgroundImage" : "url('/bbcswebdav/institution/branding/IFP/fondo-login.jpg')",
+    "pagebodyBackgroundBlendMode" : "normal",
+    "pagebodyFontFamily" : "sans-serif",
+    "pagebodyColor" : "#FFFFFF",
+    "pagebodyBackgroundColor" : "#FFFFFF",
+    "langlinksColor" : "#FFFFFF",
+    "helpbuttonColor" : "#0A2540",
+    "helpbuttonBackgroundColor" : "#FFFFFF",
+    "helpbuttonBoxShadow" : "0 0 0 2px #0A2540 inset",
+    "userlabelColor" : "#FFFFFF",
+    "passlabelColor" : "#FFFFFF",
+    "ssobuttonColor" : "#FFFFFF",
+    "ssobuttonBackgroundColor" : "rgba(102,36,129,1)",
+    "ssobuttonBoxShadow" : "0 0 0 2px rgba(102,36,129,1) inset",
+    "internalbuttonColor" : "#FFFFFF",
+    "internalbuttonBackgroundColor" : "rgba(102,36,129,1)",
+    "internalbuttonBoxShadow" : "0 0 0 2px rgba(102,36,129,1) inset",
+    "forgotpassColor" : "#91BE1F",
+    "footerPlaneta" : "<img src='/bbcswebdav/institution/branding/planetita.png' alt='logo-planeta'><a href='https://www.planetaformacion.com' target='_blank'> Planeta Formación y Universidades</a>",
+    "footerlinksColor" : "#FFFFFF",
+    "adminlinkColor" :  "#FFFFFF"
+    }
+const translate = async (baseurl, language) => {
+    return languages[language];
+}
+const marca = async (baseurl) => {
+    return mods;
+}

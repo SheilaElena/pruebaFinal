@@ -1,0 +1,19 @@
+(function ($, Drupal, drupalSettings) {
+  var w84jQuery = setInterval(function(){
+    if (typeof jQuery != 'undefined') {
+      if (typeof OneTrust != 'undefined') {
+        if (drupalSettings.cookieProSettings) {
+          setTimeout(function () {
+            if(drupalSettings.cookieProSettings.category_gtm && drupalSettings.cookieProSettings.gtm_container){
+              OneTrust.InsertScript('/themes/custom/site_builder/js/gtm.js', 'head', null, null, drupalSettings.cookieProSettings.category_gtm, true);
+            }
+            if(drupalSettings.cookieProSettings.category_opt && drupalSettings.cookieProSettings.opt_container){
+              OneTrust.InsertScript('/themes/custom/site_builder/js/optimize.js', 'head', null, null, drupalSettings.cookieProSettings.category_opt, true);
+            }
+          }, 1500);
+          clearInterval(w84jQuery);
+        }
+      }
+    }
+  },10);
+})(jQuery, Drupal, drupalSettings);

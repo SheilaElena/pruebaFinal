@@ -1,0 +1,26 @@
+((Drupal, $) => {
+  Drupal.behaviors.offCanvasClose = {
+    attach: function (context, settings) {
+      function handleClick(clickEvent) {
+        if (document.querySelector('.ui-dialog-off-canvas') && !clickEvent.target.closest('.ui-dialog-off-canvas')) {
+          const closeButton = document.querySelector('.ui-dialog-titlebar-close');
+          closeButton.click();
+        }
+      };
+
+      // Close sidebar when clicking outside.
+      $(window).on('dialog:aftercreate', (event, dialog, $element, settings) => {
+        once('offcanvas_close', $element).forEach((el) => {
+          const closeButton = document.querySelector('.ui-dialog-titlebar-close');
+          closeButton.addEventListener('click', () => {
+            // Dispatch closedialog event, to let other components know the dialog is now closed.
+            window.dispatchEvent(new CustomEvent('closedialog'));
+            window.removeEventListener('click', handleClick);
+          }, {once: true});
+
+          window.addEventListener('click', handleClick);
+        });
+      });
+    }
+  };
+})(Drupal, jQuery);

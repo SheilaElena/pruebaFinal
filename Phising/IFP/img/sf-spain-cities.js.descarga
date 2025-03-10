@@ -1,0 +1,107 @@
+window.spainProvinces = [
+    { province: "Alava", provinceISO: "ES-VI", postalCode: "1001" },
+    { province: "Albacete", provinceISO: "ES-AB", postalCode: "2001" },
+    { province: "Alicante", provinceISO: "ES-A", postalCode: "3001" },
+    { province: "Almeria", provinceISO: "ES-AL", postalCode: "4001" },
+    { province: "Asturias", provinceISO: "ES-O", postalCode: "33001" },
+    { province: "Avila", provinceISO: "ES-AV", postalCode: "5001" },
+    { province: "Badajoz", provinceISO: "ES-BA", postalCode: "6001" },
+    { province: "Baleares", provinceISO: "ES-PM", postalCode: "7001" },
+    { province: "Barcelona", provinceISO: "ES-B", postalCode: "8001" },
+    { province: "Burgos", provinceISO: "ES-BU", postalCode: "9001" },
+    { province: "Caceres", provinceISO: "ES-CC", postalCode: "10001" },
+    { province: "Cadiz", provinceISO: "ES-CA", postalCode: "11001" },
+    { province: "Cantabria", provinceISO: "ES-S", postalCode: "39001" },
+    { province: "Castellon", provinceISO: "ES-CS", postalCode: "12001" },
+    { province: "Ciudad Real", provinceISO: "ES-CR", postalCode: "13001" },
+    { province: "Cordobba", provinceISO: "ES-CO", postalCode: "14001" },
+    { province: "La Coruña", provinceISO: "ES-C", postalCode: "15001" },
+    { province: "Cuenca", provinceISO: "ES-CU", postalCode: "16001" },
+    { province: "Gerona", provinceISO: "ES-GI", postalCode: "17001" },
+    { province: "Granada", provinceISO: "ES-GR", postalCode: "18001" },
+    { province: "Guadalajara", provinceISO: "ES-GU", postalCode: "19001" },
+    { province: "Guipuzcua", provinceISO: "ES-SS", postalCode: "20001" },
+    { province: "Huelva", provinceISO: "ES-H", postalCode: "21001" },
+    { province: "Huesca", provinceISO: "ES-HU", postalCode: "22001" },
+    { province: "Jaen", provinceISO: "ES-J", postalCode: "23001" },
+    { province: "Las Palmas", provinceISO: "ES-GC", postalCode: "35001" },
+    { province: "Leon", provinceISO: "ES-LE", postalCode: "24001" },
+    { province: "Lerida", provinceISO: "ES-L", postalCode: "25001" },
+    { province: "Lugo", provinceISO: "ES-LU", postalCode: "27001" },
+    { province: "Madrid", provinceISO: "ES-M", postalCode: "28001" },
+    { province: "Malaga", provinceISO: "ES-MA", postalCode: "29001" },
+    { province: "Murcia", provinceISO: "ES-MU", postalCode: "30001" },
+    { province: "Navarra", provinceISO: "ES-NA", postalCode: "31001" },
+    { province: "Orense", provinceISO: "ES-OR", postalCode: "32001" },
+    { province: "Palencia", provinceISO: "ES-P", postalCode: "34001" },
+    { province: "Pontevedra", provinceISO: "ES-PO", postalCode: "36001" },
+    { province: "La Rioja", provinceISO: "ES-LO", postalCode: "26001" },
+    { province: "Salamanca", provinceISO: "ES-SA", postalCode: "37001" },
+    { province: "Santa Cruz de Tenerife", provinceISO: "ES-TF", postalCode: "38001"},
+    { province: "Segovia", provinceISO: "ES-SG", postalCode: "40001" },
+    { province: "Sevilla", provinceISO: "ES-SE", postalCode: "41001" },
+    { province: "Soria", provinceISO: "ES-SO", postalCode: "42001" },
+    { province: "Tarragona", provinceISO: "ES-T", postalCode: "43001" },
+    { province: "Teruel", provinceISO: "ES-TE", postalCode: "44001" },
+    { province: "Toledo", provinceISO: "ES-TO", postalCode: "45001" },
+    { province: "Valencia", provinceISO: "ES-V", postalCode: "46001" },
+    { province: "Valladolid", provinceISO: "ES-VA", postalCode: "47001" },
+    { province: "Vizcaya", provinceISO: "ES-BI", postalCode: "48001" },
+    { province: "Zamora", provinceISO: "ES-ZA", postalCode: "49001" },
+    { province: "Zaragoza", provinceISO: "ES-Z", postalCode: "50001" },
+    { province: "Ceuta", provinceISO: "ES-CE", postalCode: "51001" },
+    { province: "Melilla", provinceISO: "ES-ML", postalCode: "52001" },
+  ];
+
+const generateRandomOid = (length = 6) => {
+  const characters = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let j = 0; j < length; j++) {
+    result += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+  return result;
+};
+
+
+const processProvincias = (stepIndex,stepTo, toolType) => {
+  const options = [];
+  const toolSelected = toolType === "form" ? "formChatData" : "serviceChatData";
+
+  let idStepQuestion = stepTo? window[toolSelected].steps[stepTo - 1].id : ""
+
+  window.spainProvinces.forEach((countryInfo) => {
+    const provincia = countryInfo.province;
+    const provinciaId = countryInfo.provinceISO;
+    const postCodeId = countryInfo.postalCode;
+
+    const toQuestion = idStepQuestion;
+    const randomOid = generateRandomOid();
+
+    options.push({
+      oid: randomOid,
+      name: provincia,
+      to: toQuestion,
+      actions: [
+        {
+          machine: "customJS",
+          value: `setTimeout(() => {
+    window.sfDynamicData = window.sfDynamicData || {};
+    window.sfDynamicData.sfProvinceISO = "${provinciaId}";
+    window.sfDynamicData.sfProvinceName = "${provincia}";
+    window.sfDynamicData.sfProvincePostCode = "${postCodeId}"
+    window.sfProvinceISO = "${provinciaId}";
+    window.sfProvinceName ="${provincia}";
+    window.sfProvincePostCode = "${postCodeId}"
+    console.log(window.sfDynamicData)
+    }, 1000);`,
+        },
+      ],
+    });
+  });
+
+  window[toolSelected].steps[stepIndex-1].options = options;
+};
+
+processProvincias(window.sfQuestionIndex, window.sfQuestionTo, window.sfToolType)
+
+console.log("provinces - added correctly")

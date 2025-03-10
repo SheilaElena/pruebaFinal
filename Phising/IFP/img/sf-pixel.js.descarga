@@ -1,0 +1,2147 @@
+/************************************
+ * Utility Functions
+ */
+function replaceSubstringInObject(obj, find, replace) {
+  let newObj = Array.isArray(obj) ? [] : {};
+
+  for (let key in obj) {
+    if (typeof obj[key] === "string") {
+      newObj[key] = obj[key].replace(find, replace);
+    } else if (Array.isArray(obj[key]) && obj[key].length > 0) {
+      newObj[key] = replaceSubstringInObject(obj[key], find, replace);
+    } else if (typeof obj[key] === "object" && obj[key] !== null) {
+      newObj[key] = replaceSubstringInObject(obj[key], find, replace);
+    } else {
+      newObj[key] = obj[key];
+    }
+  }
+
+  return newObj;
+}
+/*************************** */
+
+
+if(typeof window.sf3pid === 'undefined'){
+  if(window.sfpid){
+    window.sf3pid = window.sfpid;
+  }
+}
+
+
+var sfV3 = {
+  init(){
+    let blocked = sfV3.sfGetPixelCookie('sf-blocked');
+    if (blocked === '1') {
+      return;
+    }
+
+    var url = window.location.search;
+    var addingParam = 'sf-test';
+    var removingParam = 'sf-live'
+    if (url.indexOf(addingParam) !== -1) {
+      sfV3.sfSetPixelCookie('sf-testing', 1, 0.02)
+      console.log("The URL contains the 'sf-test' parameter setting a cookie.");
+      window.sfTestMode = 1;
+    } else if (url.indexOf(removingParam) !== -1){
+      sfV3.sfSetPixelCookie('sf-testing', 0, 0.00)
+    }
+
+    let session = sfV3.sfGetPixelCookie('sf-testing');
+    if (typeof session !== "undefined" && session !== '') {
+      window.sfTestMode = 1;
+    }
+
+    // Start by loading our pixel data.
+    sfV3.loadPid();
+  },
+  schedule : [],
+  isChatOnline: async function(schedule, currentTeam, isDynamic = true) {
+    if(schedule) {
+
+      if(schedule.type === 'offline'){
+        return false;
+      }
+
+      // First check for overrides.
+      function isDateInRange(override, timezone) {
+        const currentDate = new Date();
+        const options = { timeZone: timezone };
+        const overrideDate = new Date(new Date(`${override.date}T${override.from}:00`).toLocaleString('en-US', options));
+
+        // Check if the current date matches the override date
+        if (
+          currentDate.getFullYear() === overrideDate.getFullYear() &&
+          currentDate.getMonth() === overrideDate.getMonth() &&
+          currentDate.getDate() === overrideDate.getDate()
+        ) {
+          if(override.offline === true){
+            return 'offline_always';
+          } else {
+            const currentTime = currentDate.getHours() * 60 + currentDate.getMinutes();
+            const fromTime = parseInt(override.from.split(":")[0]) * 60 + parseInt(override.from.split(":")[1]);
+            const toTime = parseInt(override.to.split(":")[0]) * 60 + parseInt(override.to.split(":")[1]);
+
+            // Check if the current time is within the specified range
+            if (currentTime >= fromTime && currentTime <= toTime) {
+              return 'online';
+            } else {
+              return 'offline_always';
+            }
+          }
+        }
+
+        return false;
+      }
+
+      // If there is an override, make sure to block.
+      const timezone = schedule.timezone;
+      let overrides = schedule.overrides;
+      if(typeof overrides !== 'undefined') {
+
+        overrides
+          .map((slot) => {
+
+            let fromTime = slot.from;
+            let toTime = slot.to;
+
+            if (slot.offline) {
+              fromTime = "00:00";
+              toTime = "23:59";
+            }
+
+            const from = new Date( `${slot.date}T${fromTime}:00` );
+            const to = new Date(`${slot.date}T${toTime}:00`);
+
+            if (slot.enabled) {
+              return {
+                from,
+                to,
+                offline : slot.offline && slot.enabled,
+                timezone : schedule.timezone
+              };
+            }
+          })
+          .filter((sl) => sl)
+          .forEach((slt) => sfV3.schedule.push(slt));
+
+
+        for (const override of overrides) {
+          if (override.enabled) {
+            if (override.teams?.some(team => team.value === currentTeam) || !override.teams || override.teams.length === 0 || (override.teams && override.teams[0].value === 'all')) {
+              let status = isDateInRange(override, timezone);
+              if (status === 'offline_always') {
+                return false;
+              } else if (status === 'online'){
+                return true;
+              }
+            }
+          }
+        }
+      }
+
+      // Create a new Date object with the current time in the desired timezone
+      const currentTime = new Date();
+      const currentTimeInHelsinki = new Date(currentTime.toLocaleString("en-US", {timeZone: schedule.timezone}));
+
+      // Extract the day and time components
+      const currentDay = currentTimeInHelsinki.toLocaleString('en-US', {weekday: 'long'}).toLowerCase();
+      const currentHour = currentTimeInHelsinki.getHours() * 60 + currentTimeInHelsinki.getMinutes();
+
+      if (schedule[currentDay]) {
+
+        schedule[currentDay].hours
+          .map((slot) => {
+            const date = `${currentTime.getFullYear()}-${
+              ("0"+(currentTime.getMonth() + 1)).slice(-2)
+            }-${ ("0"+(currentTime.getDate())).slice(-2) }`;
+
+            const from = new Date( `${date}T${slot.from}:00`);
+            const to = new Date(`${date}T${slot.to}:00`);
+
+            if (slot.enabled) {
+              return {
+                from,
+                to,
+                timezone : schedule.timezone
+              };
+            }
+          })
+          .filter((sl) => sl)
+          .forEach((slt) => sfV3.schedule.push(slt));
+
+        // Initialize an array to hold fetch promises (only for businessHoursUsers)
+        let fetchPromises = [];
+        let fetchResults = [];
+
+        for (const hour of schedule[currentDay].hours) {
+          if ((hour.teams && hour.teams.some(team => team.value === currentTeam)) || !hour.teams || hour.teams.length === 0 || (hour.teams && hour.teams[0].value === 'all')) {
+            if(hour.enabled) {
+              const fromTimeParts = hour.from.split(':');
+              const toTimeParts = hour.to.split(':');
+              const fromMinutes = parseInt(fromTimeParts[0]) * 60 + parseInt(fromTimeParts[1]);
+              const toMinutes = parseInt(toTimeParts[0]) * 60 + parseInt(toTimeParts[1]);
+
+              if (currentHour >= fromMinutes && currentHour <= toMinutes) {
+
+                if(typeof schedule.type !== 'undefined' && schedule.type === "businessHoursUsers"){
+                  var url = 'https://dash.serviceform.com/api/team-user-state?pid=' + sf3pid + '&teamId=' + (isDynamic ? sfDynamicTeam : currentTeam);
+
+                  if(window.sfV3?.ruleData?.reroutePixel && window.sfV3?.ruleData?.rerouteTeam && window.sfV3?.ruleData?.rerouteUid !== ''){
+                    url = 'https://dash.serviceform.com/api/team-user-state?pid=' + window.sfV3?.ruleData?.reroutePixel + '&uid=' + window.sfV3?.ruleData?.rerouteUid + '&teamId=' + window.sfV3?.ruleData?.rerouteTeam;
+                  }
+
+                  // Collect the fetch promises
+                  fetchPromises.push(
+                    fetch(url)
+                      .then(response => {
+                        if (!response.ok) {
+                          throw new Error('Error: ' + response.status);
+                        }
+                        return response.json();
+                      })
+                      .then(responseData => {
+                        if (responseData) {
+                          window.sfTeamAvailableData = responseData;
+                        }
+                        if(responseData.count === 0){
+                          return false;
+                        } else {
+                          return true;
+                        }
+                      })
+                  );
+
+                } else {
+                  // Return true immediately if not businessHoursUsers
+                  return true; // Chat is online for the current day and time
+                }
+              }
+            }
+          }
+        }
+
+        // If there are fetch promises, wait for them to resolve
+        if (fetchPromises.length > 0) {
+          fetchResults = await Promise.all(fetchPromises);
+
+          // Determine if any of the results indicate the chat is online
+          if (fetchResults.includes(true)) {
+            return true;
+          } else {
+            return false; // Chat is offline based on fetch results
+          }
+        } else {
+          // If no fetches were made and not returned earlier, return false
+          return false; // Chat is offline for the current day and time
+        }
+      }
+
+      return false; // Chat is offline for the current day and time
+    }
+  },
+  getUrlOrigin() {
+    const url = this.getUrl();
+    const parsedUrl = new URL(url);
+    
+    return parsedUrl.origin;
+  },
+  getUrl() {
+    let currentOrigin = window.location.origin;
+
+    let url = "https://dash.serviceform.com";
+
+    if (currentOrigin === "https://dev.serviceform.com") {
+      url = "https://dev.serviceform.com";
+    } else if (currentOrigin.includes("localhost")) {
+      url = currentOrigin;
+    } else if (currentOrigin === "https://dash.serviceform.com") {
+      url = currentOrigin;
+    }
+    return url
+  },
+  sendPopupEmail(email, subject, senderEmail, senderName){
+    var xhr3 = new XMLHttpRequest();
+    var data = '';
+
+    xhr3.addEventListener("readystatechange", function () {
+      if (this.readyState === 4) {
+        if (this.status === 200) {
+          try {
+            var json = JSON.parse(xhr3.responseText);
+            letsSendHere(json.products);
+          } catch (e) {
+            reject('Error parsing JSON response: ' + e.message);
+          }
+        } else {
+          reject('Request failed with status: ' + this.status);
+        }
+      }
+    });
+
+    xhr3.open("GET", "/backend/api/v1/cart");
+    xhr3.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+    xhr3.send(data);
+
+    function letsSendHere(products){
+      // WARNING: For POST requests, body is set to null by browsers.
+      var data = JSON.stringify({
+        "site": window.location.origin,
+        "email": email,
+        "subject": subject || "Ostoskorisi tiedot",
+        "senderEmail": senderEmail || "notifications@serviceform.com",
+        "sender": senderName || "Serviceform",
+        "cartData": products
+      });
+
+      var xhr = new XMLHttpRequest();
+      xhr.withCredentials = false;
+
+      xhr.addEventListener("readystatechange", function() {
+        if(this.readyState === 4) {
+          console.log(this.responseText);
+        }
+      });
+
+      xhr.open("POST", "https://dash.serviceform.com/api/send-cart-sendgrid");
+      xhr.setRequestHeader("Content-Type", "application/json");
+
+      xhr.send(data);
+    }
+  },
+  onePageMode: function () {
+    if (typeof sfV3.onePageListener === 'undefined') {
+      sfV3.onePageListener = 1;
+
+      (function() {
+        var pushState = history.pushState;
+        var replaceState = history.replaceState;
+
+        history.pushState = function() {
+          pushState.apply(history, arguments);
+          window.dispatchEvent(new Event('pushstate'));
+          window.dispatchEvent(new Event('locationchange'));
+        };
+
+        history.replaceState = function() {
+          replaceState.apply(history, arguments);
+          window.dispatchEvent(new Event('replacestate'));
+        };
+
+        window.addEventListener('popstate', function() {
+          window.dispatchEvent(new Event('locationchange'))
+        });
+      })();
+
+      setTimeout(function () {
+           window.addEventListener('locationchange', function(){
+             window.sfBotLoaded = 0;
+             window.sfInlineLoaded = 0;
+             window.sfFormLoaded = 0;
+             window.sfFloatingBarLoaded = 0;
+
+             if(window.sfSdkKit){
+               window.sfSdkKit.closeChat();
+             }
+
+             sfV3.rulesExecuted = 0;
+             sfV3.formPreLoaded = 0;
+             setTimeout(function () {
+               if(typeof sfV3.ruleData.performanceMode !== 'undefined' && sfV3.ruleData.performanceMode === true) {
+                 var lv = sfV3.sfGetPixelCookie('sf-livechat');
+                 if (typeof lv === 'undefined' || lv === '') {
+                   lv = 0;
+                 } else {
+                   lv = 1;
+                 }
+
+                 var body = document.querySelector('body');
+                 if(body){
+                   if(body.scrollHeight < 900) {
+                     lv = 1;
+                   }
+                 }
+
+                 if (window.location.href.includes('tarjouspyynto') || lv) {
+                   startSfInit();
+                 } else {
+                   window.addEventListener('scroll', startSfInit);
+                 }
+
+                 function startSfInit() {
+                   window.removeEventListener("scroll", startSfInit);
+                   sfV3.runMapping();
+                   sfV3.processRules('normal');
+                 }
+               } else {
+                 sfV3.runMapping();
+                 sfV3.processRules('normal');
+               }
+             },1000)
+           });
+      }, 1000);
+    }
+  },
+  reloadPixelSession(){
+    if(window.sfSdkKit){
+      window.sfSdkKit.closeChat();
+    }
+  },
+  getSession(type) {
+    // Check if cookie exists. If exists use session ID.
+    let session = sfV3.sfGetPixelCookie('sf-pxs');
+    if (typeof session === 'undefined' || session === 'undefined' || session === '') {
+      let stamp = new Date().getTime();
+      session = stamp + sfV3.generateId(16);
+      sfV3.sid = session;
+      sfV3.fsid = 'form-' + session;
+      sfV3.psid = 'popup-' + session;
+      sfV3.ssid = 'sidebar-' + session;
+      sfV3.isid = 'inline-' + session;
+      sfV3.lbsid = 'lbsid-' + session;
+
+      // Remove any old sf-leadbar data in localstorage.
+      window.localStorage.removeItem('sf-leadbar')
+
+      // Expires in 30 mins
+      if(type === 'cookie') {
+        sfV3.sfSetPixelCookie('sf-pxs', session, 0.0208333)
+      }
+    } else {
+      // Adds additional 30mins to the session
+      sfV3.sfSetPixelCookie('sf-pxs', session, 0.0208333)
+      sfV3.sid = session;
+      sfV3.fsid = 'form-' + session;
+      sfV3.psid = 'popup-' + session;
+      sfV3.ssid = 'sidebar-' + session;
+      sfV3.isid = 'inline-'+ session;
+      sfV3.lbsid = 'lbsid-' + session;
+      return session;
+    }
+  },
+  getDevice() {
+    const userAgent = navigator.userAgent.toLowerCase()
+
+    if (/mobile|android|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent)) {
+      return "mobile"
+    } else if (/tablet|ipad|playbook|silk/i.test(userAgent)) {
+      return "tablet"
+    } else if (/tv|smarttv|appletv|googletv|hbbtv|pov_tv|netcast|webos|tizen|viera|roku|dlnadoc|palmos|webmate|bada|bolt|kindle|ucbrowser/i.test(userAgent)) {
+      return "tv"
+    } else if (/windows|macintosh|x11|linux/i.test(userAgent)) {
+      return "desktop"
+    } else {
+      return "other"
+    }
+  },
+  getReferrerSource() {
+    var trafficType = 'other';        // Default traffic type
+    var specificReferrer = 'unknown'; // Default referrer
+    var campaignDetails = '';         // Default campaign details
+    var campaignName = '';            // Default campaign name
+
+    try {
+      // Helper functions
+      function getQueryParams(queryString) {
+        var params = {};
+        if (queryString) {
+          queryString = queryString.substring(1); // Remove leading '?'
+          var pairs = queryString.split('&');
+          for (var i = 0; i < pairs.length; i++) {
+            var pair = pairs[i].split('=');
+            var key = decodeURIComponent(pair[0] || '').toLowerCase();
+            var value = decodeURIComponent(pair[1] || '');
+            if (key) {
+              params[key] = value;
+            }
+          }
+        }
+        return params;
+      }
+
+      function getHashParams(hashString) {
+        var params = {};
+        if (hashString) {
+          hashString = hashString.substring(1); // Remove leading '#'
+          var pairs = hashString.split('&');
+          for (var i = 0; i < pairs.length; i++) {
+            var pair = pairs[i].split('=');
+            var key = decodeURIComponent(pair[0] || '').toLowerCase();
+            var value = decodeURIComponent(pair[1] || '');
+            if (key) {
+              params[key] = value;
+            }
+          }
+        }
+        return params;
+      }
+
+      function getHostname(url) {
+        var hostname = '';
+        if (url.indexOf("//") > -1) {
+          hostname = url.split('/')[2];
+        } else {
+          hostname = url.split('/')[0];
+        }
+        hostname = hostname.split(':')[0];
+        hostname = hostname.split('?')[0];
+        return hostname.toLowerCase();
+      }
+
+      function containsAny(str, substrings) {
+        for (var i = 0; i < substrings.length; i++) {
+          if (str.indexOf(substrings[i]) > -1) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      // Set the root referrer 
+      if (!sessionStorage.getItem('rootReferrer')) {
+        sessionStorage.setItem('rootReferrer', document.referrer);
+      }
+
+      var referrer = sessionStorage.getItem('rootReferrer') || document.referrer || '';
+      var queryParams = getQueryParams(window.location.search);
+      var hashParams = getHashParams(window.location.hash);
+
+      // Merge queryParams and hashParams
+      for (var key in hashParams) {
+        if (hashParams.hasOwnProperty(key) && !queryParams[key]) {
+          queryParams[key] = hashParams[key];
+        }
+      }
+
+      // Define common campaign parameters
+      var campaignParams = ['utm_campaign', 'campaign', 'cmp', 'cid', 'campaign_id', 'utm_term', 'utm_content'];
+
+      // Capture campaign name from any known campaign parameters
+      for (var i = 0; i < campaignParams.length; i++) {
+        var param = campaignParams[i];
+        if (queryParams[param]) {
+          campaignName = queryParams[param];
+          break; // Use the first found parameter
+        }
+      }
+
+      // Check for UTM parameters
+      if (queryParams['utm_source'] || queryParams['utm_medium'] || queryParams['utm_campaign']) {
+        trafficType = 'paid';
+        campaignDetails = 'utm: ' + (queryParams['utm_source'] || '') + ' ' +
+          (queryParams['utm_medium'] || '') + ' ' +
+          (queryParams['utm_campaign'] || '');
+        campaignDetails = campaignDetails.trim();
+
+        // Special handling for ad platforms
+        var utmSource = (queryParams['utm_source'] || '').toLowerCase();
+
+        var adPlatforms = {
+          'facebook': 'Facebook Ads',
+          'facebookads': 'Facebook Ads',
+          'fb': 'Facebook Ads',
+          'linkedin': 'LinkedIn Ads',
+          'linkedinads': 'LinkedIn Ads',
+          'li': 'LinkedIn Ads',
+          'twitter': 'Twitter Ads',
+          'twitterads': 'Twitter Ads',
+          'tw': 'Twitter Ads',
+          'google': 'Google Ads',
+          'googleads': 'Google Ads',
+          'adwords': 'Google Ads',
+          'bing': 'Microsoft Ads',
+          'bingads': 'Microsoft Ads',
+          'msn': 'Microsoft Ads',
+          'tiktok': 'TikTok Ads',
+          'tiktokads': 'TikTok Ads',
+          'tt': 'TikTok Ads',
+          'snapchat': 'Snapchat Ads',
+          'snapchatads': 'Snapchat Ads',
+          'sc': 'Snapchat Ads',
+          'pinterest': 'Pinterest Ads',
+          'pinterestads': 'Pinterest Ads',
+          'pn': 'Pinterest Ads',
+          'reddit': 'Reddit Ads',
+          'rd': 'Reddit Ads'
+        };
+
+        if (adPlatforms[utmSource]) {
+          campaignDetails = adPlatforms[utmSource];
+          specificReferrer = utmSource + '.com';
+        } else {
+          specificReferrer = utmSource;
+        }
+      }
+      // Check for other tracking parameters
+      else if (queryParams['gclid'] || queryParams['msclkid'] || queryParams['fbclid'] ||
+        queryParams['twclid'] || queryParams['ttclid'] || queryParams['pbcid'] ||
+        queryParams['scid']) {
+        trafficType = 'paid';
+
+        if (queryParams['gclid']) {
+          campaignDetails = 'Google Ads';
+          specificReferrer = 'google.com';
+        } else if (queryParams['msclkid']) {
+          campaignDetails = 'Microsoft Ads';
+          specificReferrer = 'bing.com';
+        } else if (queryParams['fbclid']) {
+          campaignDetails = 'Facebook Ads';
+          specificReferrer = 'facebook.com';
+        } else if (queryParams['twclid']) {
+          campaignDetails = 'Twitter Ads';
+          specificReferrer = 'twitter.com';
+        } else if (queryParams['ttclid']) {
+          campaignDetails = 'TikTok Ads';
+          specificReferrer = 'tiktok.com';
+        } else if (queryParams['pbcid']) {
+          campaignDetails = 'Pinterest Ads';
+          specificReferrer = 'pinterest.com';
+        } else if (queryParams['scid']) {
+          campaignDetails = 'Snapchat Ads';
+          specificReferrer = 'snapchat.com';
+        }
+      }
+      // Check for direct traffic
+      else if (!referrer) {
+        trafficType = 'direct';
+        specificReferrer = 'direct';
+      }
+      // Analyze the referrer
+      else {
+        var hostname = getHostname(referrer);
+
+        // Common sources
+        var searchEngines = [
+          'google.', 'bing.', 'yahoo.', 'duckduckgo.', 'baidu.', 'yandex.',
+          'ask.', 'aol.', 'ecosia.', 'naver.', 'seznam.', 'daum.'
+        ];
+        var socialMedia = [
+          'facebook.', 'twitter.', 'linkedin.', 'instagram.', 'pinterest.',
+          'reddit.', 'tiktok.', 'snapchat.', 'tumblr.', 'vk.com', 'weibo.',
+          'wechat.', 'whatsapp.', 'messenger.'
+        ];
+        var paidSources = [
+          'googleads.', 'bingads.', 'facebookads.', 'doubleclick.', 'adservice.google.',
+          'adwords.', 'adroll.', 'outbrain.', 'taboola.', 'criteo.'
+        ];
+
+        if (containsAny(hostname, paidSources)) {
+          trafficType = 'paid';
+          specificReferrer = hostname;
+        } else if (containsAny(hostname, searchEngines)) {
+          trafficType = 'organic';
+          specificReferrer = hostname;
+        } else if (containsAny(hostname, socialMedia)) {
+          trafficType = 'social';
+          specificReferrer = hostname;
+        } else {
+          specificReferrer = hostname;
+        }
+      }
+    } catch (error) {
+      console.error('Error parsing referrer or URL parameters:', error);
+    }
+
+    // Return all values
+    return {
+      trafficType: trafficType,
+      specificReferrer: specificReferrer,
+      campaignDetails: campaignDetails,
+      campaignName: campaignName
+    };
+  },
+  buildStatsObject(){
+    // Get referrer source details safely
+    const referrerSource = this.getReferrerSource();
+    const device = this.getDevice();
+
+    function getFolderPath(pathname) {
+      const [pathWithoutQuery] = pathname.split('?');
+      const trimmedPath = pathWithoutQuery.replace(/\/+$/, '');
+      const parts = trimmedPath.split('/').filter(Boolean);
+      if (parts.length === 0) {
+        return '/';
+      }
+      if (parts.length === 1) {
+        return `/${parts[0]}`;
+      }
+      parts.pop();
+      return `/${parts.join('/')}`;
+    }
+
+    // Default scores to false
+    let seoScore = false;
+    let accScore = false;
+
+    // Decide whether to run the checks
+    if (Math.random() < 0.01) {
+      try {
+        seoScore = sfV3.comprehensiveSEOCheck().seoScore;
+      } catch (e) {
+        console.error('SEO error', e);
+      }
+
+      try {
+        accScore = sfV3.comprehensiveAccessibilityCheck().a11yScore;
+      } catch (e) {
+        console.error('ACC error', e);
+      }
+    }
+
+
+    // Create a robust statistics object with default values
+    var statistics = {
+      pid: window.sf3pid || 'unknown',
+      sid: window.sfV3?.sid || 'unknown',
+      site: window.location.host || 'unknown',
+      lang: navigator.language || 'unknown',
+      os: navigator.userAgent || 'unknown',
+      ref: referrerSource.specificReferrer,
+      refC: referrerSource.campaignName,
+      page: window.location.href || 'unknown',
+      pathname: window.location.pathname || "",
+      folder: getFolderPath(window.location.pathname),
+      browser: sfV3?.browser() || 'unknown',
+      pages: [],
+      mobile: sfV3?.checkMobile() || false,
+      created: new Date().toISOString(),
+      device: device || 'unknown',
+      source: window.location.href || 'unknown',
+      uid: window.sfV3?.ruleData?.master || 'unknown',
+      tools: [],
+      // Add traffic and campaign details with fallbacks
+      trafficType: referrerSource.trafficType,
+      campaignDetails: referrerSource.campaignDetails
+    };
+
+    if(seoScore){
+      statistics.seoScore = seoScore;
+    }
+
+    if(accScore){
+      statistics.accScore = accScore;
+    }
+
+    // Safely add the current page details
+    let currentPage = {
+      url: document.location.href || '',
+      created: new Date().toISOString(),
+      // description: (document.querySelector('head meta[name="description"]')?.getAttribute('content') ||
+      //   document.querySelector('head meta[property="og:description"]')?.getAttribute('content') || '').slice(0, 140),
+      // image: document.querySelector('head meta[property="og:image"]')?.getAttribute('content') || '',
+      // title: document.querySelector('head meta[property="og:title"]')?.getAttribute('content') || document.title || 'unknown'
+    };
+
+    // Add the current page to the pages array
+    statistics.pages.push(currentPage);
+
+    sfV3.stats = statistics;
+
+    return statistics;
+  },
+  updateStats(data) {
+    try {
+      // Send the statistics, ensuring it won't break
+      sfV3.sendStats?.(data);
+    } catch (error) {
+      console.error('Error creating or sending statistics:', error);
+    }
+  },
+  sendStats(data) {
+    let session = window.sfV3.sfGetPixelCookie('sf-pxs');
+
+    data = {
+      ...sfV3.buildStatsObject(),
+      ...data,
+    };
+
+    if (typeof session === 'undefined' || session === '') {
+      // Cookieless mode, no stats.
+    } else {
+      if (typeof window.sfTestMode === 'undefined' || window.sfTestMode !== 1) {
+        data = JSON.stringify(data);
+        // Send data to https://statistics.serviceform.com/data
+        // Save initial data.
+        var Web = "https://statistics.serviceform.com/data"
+        var xhrWeb = new XMLHttpRequest()
+        xhrWeb.open("POST", Web)
+        xhrWeb.setRequestHeader("Content-Type", "application/json")
+        xhrWeb.send(data)
+      }
+    }
+  },
+  checkMobile() {
+    let check = false;
+    (function (a) { if (/(android|bb\d+|meego).+mobile|avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows ce|xda|xiino/i.test(a) || /1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw-(n|u)|c55\/|capi|ccwa|cdm-|cell|chtm|cldc|cmd-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc-s|devi|dica|dmob|do(c|p)o|ds(12|-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(-|_)|g1 u|g560|gene|gf-5|g-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd-(m|p|t)|hei-|hi(pt|ta)|hp( i|ip)|hs-c|ht(c(-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i-(20|go|ma)|i230|iac( |-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|-[a-w])|libw|lynx|m1-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m-cr|me(rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|-([1-8]|c))|phil|pire|pl(ay|uc)|pn-2|po(ck|rt|se)|prox|psio|pt-g|qa-a|qc(07|12|21|32|60|-[2-7]|i-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h-|oo|p-)|sdk\/|se(c(-|0|1)|47|mc|nd|ri)|sgh-|shar|sie(-|m)|sk-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h-|v-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl-|tdg-|tel(i|m)|tim-|t-mo|to(pl|sh)|ts(70|m-|m3|m5)|tx-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|yas-|your|zeto|zte-/i.test(a.substr(0, 4))) check = true })(navigator.userAgent || navigator.vendor || window.opera);
+    return check;
+  },
+  browser() {
+    let b = 'na';
+    if (typeof window.navigator !== 'undefined' && typeof window.navigator.userAgent !== 'undefined') {
+      let agent = window.navigator.userAgent;
+      let browser = agent.match(/(firefox|msie|chrome|safari)[/\s]([\d.]+)/ig);
+      if (browser) {
+        if (browser[0]) {
+          browser = browser[0].split('/');
+          if (browser[0]) {
+            b = browser[0];
+          }
+        }
+      }
+    }
+
+    return b;
+  },
+
+  loadScript(url, callback) {
+    if (!document.getElementById(url)) {
+      var scriptTag = document.createElement('script');
+      scriptTag.setAttribute('type', 'text/javascript');
+      scriptTag.setAttribute('src', url);
+      scriptTag.setAttribute('id', url);
+      scriptTag.setAttribute('charset', 'UTF-8');
+
+      scriptTag.async = true;
+
+      if (scriptTag.readyState) {
+        scriptTag.onreadystatechange = function () {
+          if (this.readyState === 'complete' || this.readyState === 'loaded') {
+            callback();
+          }
+        };
+      } else {
+        scriptTag.onload = callback;
+      }
+
+      (document.getElementsByTagName('head')[0] || document.documentElement).appendChild(scriptTag);
+    } else {
+      if(callback) {
+        callback();
+      }
+    }
+  },
+  sfSetPixelCookie: function (cname, cvalue, exdays) {
+    if (typeof window.sfCookieLess === 'undefined' || window.sfCookieLess === 0) {
+      var d = new Date();
+      d.setTime(d.getTime() + (parseFloat(exdays) * 24 * 60 * 60 * 1000));
+      var expires = "expires=" + d.toUTCString();
+      document.cookie = cname + "=" + cvalue + ";" + expires + ";path=/;SameSite=Lax;";
+    }
+  },
+  sfGetPixelCookie: function (cname) {
+    var name = cname + "=";
+    var ca = document.cookie.split(';');
+    for (var i = 0; i < ca.length; i++) {
+      var c = ca[i];
+      while (c.charAt(0) == ' ') {
+        c = c.substring(1);
+      }
+      if (c.indexOf(name) == 0) {
+        return c.substring(name.length, c.length);
+      }
+    }
+    return "";
+  },
+  sfDeletePixelCookie: function (cname) {
+    document.cookie = cname + "=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax;";
+  },
+  loadPid(){
+    var xhr = new XMLHttpRequest();
+    var data = '';
+    xhr.addEventListener("readystatechange", async function () {
+      if (this.readyState === 4) {
+        var response = this.responseText;
+        response = JSON.parse(response);
+
+        sfV3.ruleData = response;
+
+        if(typeof sfV3.ruleData.cookieMode !== 'undefined' && sfV3.ruleData.cookieMode === true) {
+          sfV3.getSession('cookieless');
+        } else {
+          sfV3.getSession('cookie');
+        }
+        if(typeof sfV3.ruleData.performanceMode !== 'undefined' && sfV3.ruleData.performanceMode === true) {
+          sfV3.processRules('forms-only');
+
+          var lv = sfV3.sfGetPixelCookie('sf-livechat');
+          if (typeof lv === 'undefined' || lv === '') {
+            lv = 0;
+          } else {
+            lv = 1;
+          }
+
+          if (window.location.href.includes('reklamaatiot') ||
+            window.location.href.includes('tarjouspyynto') ||
+            window.location.href.includes('tori.fi') ||
+            window.location.href.includes('nettiauto') ||
+            window.location.href.includes('nettiauto') ||
+            window.location.href.includes('ota-yhteytta') || lv) {
+            startSfInit();
+          } else {
+            window.addEventListener('scroll', startSfInit);
+          }
+
+          function startSfInit() {
+            window.removeEventListener("scroll", startSfInit);
+            sfV3.processRules('normal');
+          }
+        } else {
+          sfV3.processRules('normal');
+        }
+      }
+    });
+    const currentUrl = this.getUrl()
+    xhr.open("GET", currentUrl + "/api/public/pid/" + window.sf3pid);
+    xhr.send(data);
+  },
+  runMapping(){
+    let url = window.location.href;
+
+    if(sfV3.ruleData && sfV3.ruleData.rules) {
+      var rules = sfV3.ruleData.rules;
+
+      // Mapping first.
+      var mapping = rules.mapping;
+
+      if (mapping) {
+        for (let i = 0; i < mapping.length; i++) {
+          if (mapping[i] && mapping[i].rule && mapping[i].rule.value === 'class_text') {
+
+            // Defaults for portal mapping.
+            var allValues = mapping[i].ruleValue + ', #roomData, .contact_height b, #giosgRoomData, .dealerName, .dealer_name, #car > div:nth-child(9) > div.mb.ls b, .text-petroleum.underline, #yhteystiedot a, .contact-detail__address-dealer, .dealerInfo';
+
+            var ruleClasses = allValues.split(',').map((cls) => cls.trim());
+            ruleClasses.forEach((ruleClass) => {
+              var elements = document.querySelectorAll(ruleClass);
+              elements.forEach((element) => {
+                if (element) {
+                  let siteText = element.textContent.toLowerCase();
+                  if (element.getAttribute('data-title')) {
+                    siteText = element.getAttribute('data-title').toLowerCase();
+                  }
+                  if (typeof mapping[i].containsText === 'undefined' && mapping[i].containsText === '') {
+                    let markTeamLabel = mapping[i].markTeam ? mapping[i].markTeam.label.toLowerCase() : '';
+                    if (markTeamLabel && siteText.includes(markTeamLabel)) {
+                      window.sfDynamicTeam = mapping[i].markTeam.value;
+                    }
+                  } else {
+                    if (mapping[i].containsText) {
+                      let actions = mapping[i].actions;
+
+                      let containsText = mapping[i].containsText.toLowerCase();
+                      if (containsText && siteText.includes(containsText)) {
+                        for (var x = 0; x < actions.length; x++) {
+                          if(actions[x].value === 'markTeam'){
+                            if (mapping[i].markTeam) {
+                              window.sfDynamicTeam = mapping[i].markTeam.value;
+                            }
+                          } else if(actions[x].value === 'emailCopy'){
+                            if (mapping[i].emailCopy) {
+                              window.sfDynamicEmail = mapping[i].emailCopy;
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              });
+            });
+          } else if (mapping[i] && mapping[i].rule && mapping[i].rule.value === 'url_contains') {
+            if(url) {
+              if (url.includes(mapping[i].ruleValue)) {
+                if (mapping[i].emailCopy) {
+                  window.sfDynamicEmail = mapping[i].emailCopy;
+                }
+                if (mapping[i].markTeam && mapping[i].markTeam.value) {
+                  window.sfDynamicTeam = mapping[i].markTeam.value;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  processRules(type){
+
+    let rules = sfV3.ruleData.rules;
+    if (typeof sfV3.rulesExecuted === 'undefined' || sfV3.rulesExecuted === 0) {
+      if (typeof rules !== 'undefined') {
+
+        let loadedTools = [];
+        // Loop advanced rules first.
+
+        let advancedRules = rules.advanced;
+        let url = window.location.href;
+
+        if(typeof sfV3.ruleData.onePage !== 'undefined' && sfV3.ruleData.onePage === true) {
+          sfV3.onePageMode()
+        }
+        sfV3.runMapping();
+
+        for (var k = 0; k < advancedRules.length; k++) {
+          var splitRules = advancedRules[k].filter_value.split(',');
+
+          if(advancedRules[k].type === 'url_contains') {
+            if(advancedRules[k].status === true) {
+              for (var ik = 0; ik < splitRules.length; ik++) {
+                let ruleInd = splitRules[ik].trim();
+                if (url.includes(ruleInd) || advancedRules[k].filter_value === '') {
+                  if(type === 'forms-only'){
+                    if (advancedRules[k].action !== 'dynamic_form' && advancedRules[k].action !== 'form' && advancedRules[k].action !== 'customJS'){
+                      continue;
+                    }
+                  } else if(sfV3.formPreLoaded) {
+                    if (advancedRules[k].action === 'dynamic_form' || advancedRules[k].action === 'form' || advancedRules[k].action === 'customJS'){
+                      continue;
+                    }
+                  }
+                  this.processAction(advancedRules[k])
+                  if(advancedRules[k].action_value) {
+                    loadedTools.push({ id: advancedRules[k].action_value, views: 1 });
+                  }
+                }
+              }
+            }
+          }
+          else if(advancedRules[k].type === 'url_equals') {
+            if(advancedRules[k].status === true) {
+              for (var ik = 0; ik < splitRules.length; ik++) {
+                let ruleInd = splitRules[ik].trim();
+                if (ruleInd === url) {
+                  if(type === 'forms-only'){
+                    if (advancedRules[k].action !== 'dynamic_form' && advancedRules[k].action !== 'form' && advancedRules[k].action !== 'customJS'){
+                      continue;
+                    }
+                  } else if(sfV3.formPreLoaded) {
+                    if (advancedRules[k].action === 'dynamic_form' || advancedRules[k].action === 'form' || advancedRules[k].action === 'customJS'){
+                      continue;
+                    }
+                  }
+                  this.processAction(advancedRules[k]);
+                  if(advancedRules[k].action_value) {
+                    loadedTools.push({ id: advancedRules[k].action_value, views: 1 });
+                  }
+                }
+              }
+            }
+          } else if(advancedRules[k].type === 'css_selector') {
+            if(advancedRules[k].status === true) {
+              if(advancedRules[k].filter_value !== '') {
+                if(document.querySelector(advancedRules[k].filter_value)) {
+                  if(type === 'forms-only'){
+                    if (advancedRules[k].action !== 'dynamic_form' && advancedRules[k].action !== 'form' && advancedRules[k].action !== 'customJS'){
+                      continue;
+                    }
+                  } else if(sfV3.formPreLoaded) {
+                    if (advancedRules[k].action === 'dynamic_form' || advancedRules[k].action === 'form' || advancedRules[k].action === 'customJS'){
+                      continue;
+                    }
+                  }
+                  this.processAction(advancedRules[k]);
+                  if(advancedRules[k].action_value) {
+                    loadedTools.push(
+                      { id: advancedRules[k].action_value, views: 1 }
+                    );
+                  }
+                }
+              }
+            }
+          }
+        }
+        // If no advanced rules could load chatbot, check the simple rules.
+        let simpleRules = rules.simple;
+
+        for (var i = 0; i < simpleRules.length; i++) {
+          if(simpleRules[i].status === true) {
+            loadedTools.push(this.processAction(simpleRules[i]));
+            if(simpleRules[i].action_value) {
+              loadedTools.push({
+                  id: simpleRules[i].action_value, views: 1
+                }
+              );
+            }
+          }
+        }
+        if(type !== 'forms-only') {
+          sfV3.rulesExecuted = 1;
+        } else {
+          sfV3.formPreLoaded = 1;
+        }
+
+        sfV3.loadedTools = loadedTools;
+        loadedTools = {
+          tools: loadedTools
+        }
+        if(typeof rules.stats === 'undefined' || rules.stats) {
+          // Stats sending after loading.
+          sfV3.updateStats(loadedTools);
+        }
+      } else {
+        console.log('hega')
+        // Save views anyways.
+        sfV3.updateStats();
+      }
+    }
+  },
+  checkForJson: function (text) {
+    if (/^[\],:{}\s]*$/.test(text.replace(/\\["\\\/bfnrtu]/g, '@').
+    replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g, ']').
+    replace(/(?:^|:|,)(?:\s*\[)+/g, ''))) {
+      return 1;
+    } else {
+      return 0;
+    }
+  },
+  getTeamStatuses: async function (businessHours) {
+    if (!businessHours) return;
+    
+    const teams = new Set();
+    
+    const weekDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    
+    weekDays.forEach(day => {
+      if (businessHours[day]?.hours) {
+        businessHours[day].hours
+          .filter(slot => slot.enabled && slot.teams)
+          .forEach(slot => {
+            slot.teams.forEach(team => teams.add(team.value));
+          });
+      }
+    });
+    
+    if (businessHours.overrides) {
+      businessHours.overrides
+        .filter(override => override.enabled && override.teams)
+        .forEach(override => {
+          override.teams.forEach(team => teams.add(team.value));
+        });
+    }
+  
+    const resultObject = {};
+    
+    for (const teamId of teams) {
+      const isOnline = await sfV3.isChatOnline(businessHours, teamId, false);
+      
+      let teamLabel = '';
+      weekDays.some(day => {
+        if (businessHours[day]?.hours) {
+          const team = businessHours[day].hours
+            .flatMap(slot => slot.teams)
+            .find(team => team.value === teamId);
+          if (team) {
+            teamLabel = team.label;
+            return true;
+          }
+        }
+        return false;
+      });
+  
+      resultObject[teamId] = isOnline;
+    }
+  
+    // Store the results
+    window.sfV3.ruleData.teamData = resultObject;
+    
+    return resultObject;
+  },
+
+  processAction: async function(rule) {
+    if(rule.action === 'dynamicEmail') {
+      window.sfDynamicEmail = rule.action_value2;
+    }
+    if(rule.action === 'online_offline') {
+      if (window.sfBotLoaded !== 1) {
+
+        let team = 'all';
+        if(typeof window.sfDynamicTeam !== 'undefined' && window.sfDynamicTeam !== ''){
+          team = window.sfDynamicTeam;
+        }
+
+        window.sfBotLoaded = 1;
+
+        let online = await sfV3.isChatOnline(sfV3.ruleData.businessHours, team);
+
+        let chatTool = rule.action_value_offline;
+        if(online){
+          window.sfLivechatOnline = true;
+          chatTool = rule.action_value;
+        } else {
+          window.sfLivechatOnline = false;
+        }
+
+        if(chatTool) {
+          this.loadChatTool(chatTool, 'chat', '');
+          return {
+            tid: chatTool
+          }
+        }
+      }
+    }
+    if (rule.action === 'chat' || rule.action === "livechat") {
+      if (window.sfBotLoaded !== 1) {
+        this.loadChatTool(rule.action_value, 'chat', '');
+        window.sfBotLoaded = 1;
+        return {
+          tid: rule.action_value
+        }
+      }
+    }
+    else if(rule.action === 'engagement_chat' || rule.action === 'engagement'){
+      if (window.sfInlineLoaded !== 1) {
+        this.loadChatToolInline(rule.action_value, rule.action, rule.action_value2);
+        window.sfInlineLoaded = 1;
+        return {
+          tid: rule.action_value
+        }
+      }
+     }
+    else if (rule.action === 'dynamic_form' || rule.action === 'form' || rule.action === 'popup' || rule.action === 'form_cta') {
+      const actionHandlers = {
+        'dynamic_form': 'sfFormLoaded',
+        'form': 'sfFormLoaded',
+        'popup': 'sfPopupLoaded',
+        'sidebar': 'sfSidebarLoaded',
+      };
+
+      let ruleAction = rule.action;
+      if(rule.action === 'form_cta') {
+        ruleAction = 'sidebar';
+      }
+      const loadCondition = actionHandlers[ruleAction];
+
+      if (loadCondition && window[loadCondition] !== 1) {
+        this.loadChatToolForm(rule.action_value, rule.action, rule.action_value2);
+        window[loadCondition] = 1;
+      }
+      return {
+        tid: rule.action_value
+      }
+    }
+    else if (rule.action === 'floatingbar') {
+      if (window.sfFloatingBarLoaded !== 1) {
+         this.loadFloatingBarTool(rule.action_value, rule.action, rule.action_value2)
+        window.sfFloatingBarLoaded = 1
+         return {
+           tid: rule.action_value
+         }
+       }
+    }
+    else if (rule.action === 'carousel') {
+      if (window.sfCarouselLoaded !== 1) {
+        this.loadCarouselTool(rule.action_value, rule.action, rule.action_value2)
+        window.sfCarouselLoaded = 1
+        return {
+          tid: rule.action_value
+        }
+      }
+    }
+    else if (rule.action === 'search') {
+      if (window.sfSearchLoaded !== 1) {
+        this.loadSearchUi(rule.action_value, rule.action, rule.action_value2)
+        window.sfSearchLoaded = 1
+        return {
+          tid: rule.action_value
+        }
+      }
+    }
+    else if (rule.action === 'cart') {
+      if (window.sfCartLoaded !== 1) {
+        this.loadCartTool(rule.action_value, rule.action, rule.action_value2)
+        window.sfCartLoaded = 1
+        return {
+          tid: rule.action_value
+        }
+      }
+    } 
+    else if(rule.action === 'ourly_buttons' && window.sfOurlyButtonsLoaded !== 1){
+      this.loadOurlyTool(rule.action_value, rule.action_value2, "buttons", rule.calendars);
+      window.sfOurlyButtonsLoaded = 1;
+      return {
+          tid: rule.action_value
+        }
+    } else if(rule.action === 'ourly_single' && window.sfOurlySingleLoaded !== 1) {
+        this.loadOurlyTool(rule.action_value, rule.action_value2, "single");
+        window.sfOurlySingleLoaded = 1;
+        return {
+          tid: rule.action_value
+        }
+    }
+    else if(rule.action === 'customJS'){
+      let customJS = rule.action_js_value;
+      if (typeof customJS !== 'undefined') {
+        if (customJS !== '') {
+          if (sfV3.checkForJson(customJS)) {
+            eval(JSON.parse(customJS));
+          } else {
+            eval(customJS);
+          }
+        }
+      }
+    }
+    else if (rule.action === "disable_all_tools") {
+      window.sfBotLoaded = 1;
+      window.sfInlineLoaded = 1;
+      window.sfFormLoaded = 1;
+      window.sfFloatingBarLoaded = 1;
+      window.sfPopupLoaded = 1;
+      window.sfSidebarLoaded = 1;
+      window.sfOurlyButtonsLoaded = 1;
+      window.sfOurlySingleLoaded = 1;
+    }
+    else if (rule.action === "disable_chat") {
+      window.sfBotLoaded = 1;
+    }
+    else if (rule.action === "disable_inline_chat") {
+      window.sfInlineLoaded = 1;
+    }
+    else if (rule.action === "disable_forms") {
+      window.sfFormLoaded = 1;
+      window.sfPopupLoaded = 1;
+      window.sfSidebarLoaded = 1;
+    }
+
+
+    return 0;
+  },
+  loadChatTool(tid, type, place){
+
+    var body = document.querySelector('body');
+
+    if (window.location.href.includes('veho')) {
+      // Ensure the body variable is declared
+      body = document.querySelector('html');
+    }
+
+    if(type === 'engagement_chat') {
+      var body = document.querySelector(place);
+      if(!body){
+        console.log('Serviceform: Placement class doesnt exist.')
+        return;
+      }
+    }
+
+    body.insertAdjacentHTML('beforeend', '<div id="sf-chat-tool" class="sf-'+type+'""></div>');
+
+    const currentUrl = this.getUrl()
+
+    var data = "";
+    var xhr = new XMLHttpRequest();
+
+    xhr.addEventListener("readystatechange", async function () {
+      if (this.readyState === 4) {
+        var response = this.responseText;
+        response = JSON.parse(response);
+        response =  replaceSubstringInObject(response, 'ucarecdn.com', 'images2.serviceform.com')
+        response =  replaceSubstringInObject(response, 'images.serviceform.com', 'images2.serviceform.com')
+
+        window.serviceChatData = response;
+        window.serviceChatData.tid = tid;
+
+        if(window.sfSdkKit){
+          sfSdkKit.resetChat();
+        } else {
+
+          if (response !== '404') {
+            var link = document.createElement("link");
+            link.rel = "stylesheet";
+            let u = currentUrl;
+
+            if(window.sfTestMode === 1){
+              u = 'https://dev.serviceform.com'
+            } else if (window.location.href.includes('test.html')) {
+              u = 'http://localhost:3000';
+            }
+
+            link.href = u + '/embed/chat.css?10';
+            document.getElementsByTagName("head")[0].appendChild(link);
+            // if (window.location.href.includes('test.html')) {
+            //   url = 'http://localhost:3000';
+            // }
+            sfV3.loadScript(u + '/embed/chat.js?10')
+          }
+        }
+      }
+    });
+
+    xhr.open("GET", currentUrl + "/api/public/tid/" + tid);
+    xhr.send(data);
+  },
+  loadChatToolInline(tid, type, place){
+
+    // Add element to body.
+    var body = document.querySelector('body');
+
+    if(type === 'engagement_chat' || type === 'engagement') {
+      var body = document.querySelector(place);
+      if(!body){
+        console.log('Serviceform: Placement class doesnt exist.')
+        return;
+      }
+    }
+
+    body.insertAdjacentHTML('beforeend', '<div id="sf-chat-tool-inline" class="sf-'+type+'""></div>');
+
+    const currentUrl = this.getUrl()
+
+    var data = "";
+    var xhr = new XMLHttpRequest();
+
+    xhr.addEventListener("readystatechange", async function () {
+      if (this.readyState === 4) {
+        var response = this.responseText;
+        response = JSON.parse(response);
+        window.inlineChatData = response;
+        window.inlineChatData.tid = tid;
+
+        if(window.inlineSfKit) {
+          window.inlineSfKit.resetChat();
+        } else {
+          if (response !== '404') {
+            var link = document.createElement("link");
+            link.rel = "stylesheet";
+            let u = currentUrl;
+
+            if (window.location.href.includes('test.html')) {
+              u = 'http://localhost:3000';
+            }
+            link.href = u + '/embed/chat.css?11';
+            document.getElementsByTagName("head")[0].appendChild(link);
+            // if (window.location.href.includes('test.html')) {
+            //   url = 'http://localhost:3000';
+            // }
+            sfV3.loadScript(u + '/embed/inline.js?11')
+          }
+        }
+      }
+    });
+
+    xhr.open("GET", currentUrl + "/api/public/tid/" + tid);
+    xhr.send(data);
+  },
+  async loadChatToolForm(tid, type, place) {
+    let body = document.querySelector('body');
+    let designType = 'form';
+
+    if (type === 'dynamic_form' || type === 'form') {
+      body = await this.findBodyWithRetries(place, 3, 1000);
+      if (!body) {
+        console.log('Body element not found after 3 retries');
+        return;
+      }
+    } else if (type === 'popup') {
+      if (sfV3.sfGetPixelCookie(`sf-popup-time-${tid}`) === "1") return;
+      designType = 'popup';
+    } else if (type === 'form_cta') {
+      designType = 'sidebar';
+    }
+
+    const existingElement = document.querySelector(`#sf-chat-tool-${designType}`);
+    if (existingElement) {
+      sfV3.sfRemoveElement(existingElement);
+    }
+
+    body.insertAdjacentHTML('beforeend', `<div id="sf-chat-tool-${designType}" class="sf-${type}"></div>`);
+
+    let currentUrl = this.getUrl();
+    const xhr = new XMLHttpRequest();
+
+    xhr.addEventListener("readystatechange", () => {
+      if (xhr.readyState === 4) {
+        const response = JSON.parse(xhr.responseText);
+
+        if (response === '404') {
+          console.log("no response");
+          return;
+        }
+
+        let chatDataKey, resetFunction, resetMethod, scriptPath, cssPath;
+
+        if (designType === 'popup') {
+          window.formChatDataPopup = response;
+          chatDataKey = 'formChatDataPopup';
+          resetFunction = 'sfPopupKit';
+          resetMethod = 'resetPopup';
+          scriptPath = 'popup.js?11';
+          cssPath = 'formpopup.css?11';
+        } else if (designType === 'sidebar') {
+          window.formChatDataSidebar = response;
+          chatDataKey = 'formChatDataSidebar';
+          resetFunction = 'sfSidebarKit';
+          resetMethod = 'resetSidebar';
+          scriptPath = 'sidebar.js?11';
+          cssPath = 'formsidebar.css?11'
+        } else {
+          window.formChatData = response;
+          chatDataKey = 'formChatData';
+          resetFunction = 'sfFormKit';
+          resetMethod = 'resetForm';
+          scriptPath = 'form.js?11';
+          cssPath = 'form.css?11'
+        }
+
+
+        window[chatDataKey].design.designType = designType;
+        window[chatDataKey].tid = tid;
+
+        if (window[resetFunction] && typeof window[resetFunction][resetMethod] === 'function') {
+          window[resetFunction][resetMethod]();
+        } else {
+          const link = document.createElement("link");
+          if (window.location.href.includes('test.html')) {
+            currentUrl = 'http://localhost:3000';
+          }
+          link.rel = "stylesheet";
+          link.href = currentUrl + '/embed/' + cssPath;
+          document.head.appendChild(link);
+          sfV3.loadScript(currentUrl + '/embed/' + scriptPath);
+        }
+      }
+    });
+
+    xhr.open("GET", `${currentUrl}/api/public/tid/${tid}`);
+    xhr.send();
+  },
+
+  loadFloatingBarTool(tid, type) {
+
+    let hasPopped = sfV3.sfGetPixelCookie('sf-popup-time-' + tid)
+
+    if (hasPopped === "1") {
+      return
+    }
+
+    // Add element to body.
+    var body = document.querySelector('body')
+
+    let exists = document.querySelector('#sf-leadbar')
+    if (exists) {
+      sfV3.sfRemoveElement(exists)
+    }
+
+    body.insertAdjacentHTML('beforeend', '<div id="sf-leadbar" class="sf-' + type + '""></div>')
+
+    const currentUrl = this.getUrl()
+
+    var data = ""
+    var xhr = new XMLHttpRequest()
+    xhr.addEventListener("readystatechange", async function () {
+      if (this.readyState === 4) {
+        var response = this.responseText
+        response = JSON.parse(response)
+        window.floatingBarData = response
+        window.floatingBarData.tid = tid
+
+        if (window.sfFloatingBar) {
+          sfFloatingBar.start()
+        } else {
+          if (response !== '404') {
+            var link = document.createElement("link")
+            link.rel = "stylesheet"
+            let u = currentUrl
+
+            if (window.sfTestMode === 1) {
+              u = 'https://dev.serviceform.com'
+            } else if (window.location.href.includes('test.html')) {
+              u = 'http://localhost:3000'
+            }
+            link.href = u + '/embed/floatingbar.css?11'
+            document.getElementsByTagName("head")[0].appendChild(link)
+            // if (window.location.href.includes('test.html')) {
+            //   url = 'http://localhost:3000';
+            // }
+            sfV3.loadScript(u + '/embed/floatingbar.js?11')
+          } else {
+            console.log("no response")
+          }
+        }
+      }
+    })
+
+    xhr.open("GET", currentUrl + "/api/public/tid/" + tid)
+    xhr.send(data)
+  },
+
+  async findBodyWithRetries(selector, maxRetries, retryDelay) {
+    let retries = 0;
+
+    while (retries < maxRetries) {
+      const body = document.querySelector(selector);
+      if (body) {
+        return body;
+      }
+
+      console.log(`Body element not found, retrying (${retries + 1}/${maxRetries})...`);
+      retries++;
+
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
+    }
+
+    return null;
+  },
+  loadCartTool(tid, type, place) {
+    let body = document.querySelector('body');
+
+    const existingElement = document.querySelector("#sf-car-cart");
+    if (existingElement) {
+      sfV3.sfRemoveElement(existingElement);
+    }
+
+    body.insertAdjacentHTML('beforeend', `<div id="sf-cart" class="sf-cart"></div>`);
+
+    let currentUrl = this.getUrl();
+    const xhr = new XMLHttpRequest();
+
+    xhr.addEventListener("readystatechange", () => {
+      if (xhr.readyState === 4) {
+        const response = JSON.parse(xhr.responseText);
+
+        if (response === '404') {
+          console.log("no response");
+          return;
+        }
+
+        window.sfSiteCartConfig = response;
+        let currentUrl = this.getUrlOrigin()
+
+        if(window.sfTestMode === 1){
+          currentUrl = 'https://dev.serviceform.com'
+        } else if (window.location.href.includes('test.html')) {
+          currentUrl = 'http://localhost:3000';
+        }
+
+        sfV3.loadScript(currentUrl + '/embed/sitecart.js');
+      }
+    });
+
+    xhr.open("GET", `${currentUrl}/api/public/tid/${tid}`);
+    xhr.send();
+  },
+  loadCarouselTool(tid, type, place) {
+    let body = document.querySelector('body');
+    let designType = 'form';
+
+    body = document.querySelector(place);
+    if (!body) return;
+
+    const existingElement = document.querySelector("#sf-carousel");
+    if (existingElement) {
+      sfV3.sfRemoveElement(existingElement);
+    }
+
+    body.insertAdjacentHTML('beforeend', `<div id="sf-carousel" class="sf-${type}"></div>`);
+
+    let currentUrl = this.getUrl();
+    const xhr = new XMLHttpRequest();
+
+    xhr.addEventListener("readystatechange", () => {
+      if (xhr.readyState === 4) {
+        const response = JSON.parse(xhr.responseText);
+
+        if (response === '404') {
+          console.log("no response");
+          return;
+        }
+
+        response.tid = tid;
+        window.sfCarouselData = response;
+        let currentUrl = this.getUrlOrigin()
+
+        if(window.sfTestMode === 1){
+          currentUrl = 'https://dev.serviceform.com'
+        } else if (window.location.href.includes('test.html')) {
+          currentUrl = 'http://localhost:3000';
+        }
+
+        sfV3.loadScript(currentUrl + '/embed/carousel.js');
+      }
+    });
+
+    xhr.open("GET", `${currentUrl}/api/public/tid/${tid}`);
+    xhr.send();
+  },
+  loadSearchUi(tid, type, place) {
+    let body = document.querySelector('body');
+    let designType = 'form';
+
+    body = document.querySelector(place);
+    if (!body) return;
+
+    const existingElement = document.querySelector("#sf-search-widget-inline");
+    if (existingElement) {
+      sfV3.sfRemoveElement(existingElement);
+    }
+
+    body.insertAdjacentHTML('beforeend', `<div id="sf-search-widget-inline" class="sf-${type}"></div>`);
+
+    let currentUrl = this.getUrl();
+    const xhr = new XMLHttpRequest();
+
+    xhr.addEventListener("readystatechange", () => {
+      if (xhr.readyState === 4) {
+        const response = JSON.parse(xhr.responseText);
+
+        if (response === '404') {
+          console.log("no response");
+          return;
+        }
+
+        window.sfSearchData = response;
+        let currentUrl = this.getUrlOrigin()
+
+        if(window.sfTestMode === 1){
+          currentUrl = 'https://dev.serviceform.com'
+        } else if (window.location.href.includes('test.html')) {
+          currentUrl = 'http://localhost:3000';
+        }
+
+        sfV3.loadScript(currentUrl + '/embed/searchreuse.js');
+      }
+    });
+
+    xhr.open("GET", `${currentUrl}/api/public/tid/${tid}`);
+    xhr.send();
+  },
+  loadOurlyTool(tid, type, place, setup) {
+
+    if (!tid || !place) {
+      console.error("Missing required parameters for Ourly tool");
+      return;
+    }
+    const targetElement = document.querySelector(place);
+    if (!targetElement) {
+      console.error("Target element not found:", place);
+      return;
+    }
+
+    if(setup === "buttons"){
+      const buttons = document.querySelectorAll(place);
+      if (!buttons || buttons.length === 0) {
+        console.error("No button target elements found:", place);
+        return;
+      }
+
+      buttons.forEach((button, index) => {
+        targetElement.insertAdjacentHTML('beforeend', `<button id="sf-ourly-button-${index}" class="sf-ourly-button">Book now</button>`);
+
+        const ourlyButton = document.getElementById(`sf-ourly-button-${index}`);
+        ourlyButton.addEventListener('click', () => {
+          // Create modal container
+          const modalContainer = document.createElement('div');
+          modalContainer.className = 'sf-ourly-modal';
+          modalContainer.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+          `;
+
+          // Create modal content
+          const modalContent = document.createElement('div');
+          modalContent.className = 'sf-ourly-modal-content';
+          modalContent.style.cssText = `
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            position: relative;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+          `;
+
+          // Create close button
+          const closeButton = document.createElement('button');
+          closeButton.className = 'sf-ourly-modal-close';
+          closeButton.innerHTML = '&times;';
+          closeButton.style.cssText = `
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            border: none;
+            background: none;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          `;
+
+          // Add close functionality
+          closeButton.onclick = () => {
+            document.body.removeChild(modalContainer);
+          };
+
+          // Assemble modal
+          modalContent.appendChild(closeButton);
+          modalContent.insertAdjacentHTML('beforeend', `<div id="sf-ourly-tool-${index}" class="sf-ourly-tool"></div>`);
+
+          modalContainer.appendChild(modalContent);
+          document.body.appendChild(modalContainer);
+
+          // Allow clicking outside modal to close
+          modalContainer.onclick = (e) => {
+            if (e.target === modalContainer) {
+              document.body.removeChild(modalContainer);
+            }
+          };
+          window.sfOurlyConfig = {
+            type: "id_with_index",
+            tid: tid,
+            index: index
+          };
+
+          console.log(window.sfOurlyConfig);
+
+          // Load Ourly script
+          let currentUrl = this.getUrl();
+          if (window.location.href.includes('shameem.html')) {
+            currentUrl = 'http://localhost:3000';
+          }
+
+          console.log(currentUrl);
+
+          const sfOurlyScript = document.createElement("script");
+          sfOurlyScript.src = currentUrl + '/embed/ourly.js?11';
+          sfOurlyScript.async = true;
+
+          sfOurlyScript.onload = function() {
+            if (window.sfOurly && typeof window.sfOurly.init === "function") {
+              window.sfOurly.init(window.sfOurlyConfig);
+            } else {
+              console.error("sfOurly library did not load correctly.");
+            }
+          };
+
+          sfOurlyScript.onerror = function(error) {
+            console.error("Failed to load sfOurly script:", error);
+          };
+
+          document.body.appendChild(sfOurlyScript);
+        });
+
+        button.insertAdjacentElement('beforeend', ourlyButton);
+      });
+
+    } else {
+      const existingTool = document.getElementById('sf-ourly-tool');
+      if (existingTool) {
+        existingTool.remove();
+      }
+      targetElement.insertAdjacentHTML('beforeend', `<div id="sf-ourly-tool" class="sf-ourly-tool"></div>`);
+
+      window.sfOurlyConfig = {
+        type: "id",
+        tid: tid
+      };
+      let currentUrl = this.getUrl();
+      if (window.location.href.includes('test.html')) {
+        currentUrl = 'http://localhost:3000';
+      }
+      const sfOurlyScript = document.createElement("script");
+      sfOurlyScript.src = currentUrl + '/embed/ourly.js?11';
+      sfOurlyScript.async = true;
+
+      sfOurlyScript.onload = function() {
+        console.log("Script loaded successfully");
+        if (window.sfOurly && typeof window.sfOurly.init === "function") {
+          window.sfOurly.init(window.sfOurlyConfig);
+        } else {
+          console.error("sfOurly library did not load correctly.");
+        }
+      };
+
+      sfOurlyScript.onerror = function(error) {
+        console.error("Failed to load sfOurly script:", error);
+      };
+
+      document.body.appendChild(sfOurlyScript);
+    }
+  },
+  sfRemoveElement: function (elem) {
+    if (elem) {
+      return elem.parentNode.removeChild(elem);
+    }
+  },
+  generateId: function (length) {
+    var s = '';
+    do { s += Math.random().toString(36).substr(2); } while (s.length < length);
+    s = s.substr(0, length);
+
+    return s;
+  },
+  comprehensiveSEOCheck() {
+    var checks = [];
+
+    function addCheck(name, passed, suggestionIfFail) {
+      checks.push({
+        check: name,
+        passed: passed,
+        suggestion: passed ? 'All good!' : suggestionIfFail
+      });
+    }
+
+    if (typeof document === 'undefined' || !document) {
+      addCheck('Environment', false, 'No document object found.');
+      return { checks: checks, seoScore: 0, passedChecks: 0, totalChecks: checks.length };
+    }
+
+    var doctype = document.doctype;
+    var isHTML5 = !!(doctype && doctype.name && doctype.name.toLowerCase() === 'html');
+    addCheck('HTML5 doctype', isHTML5, 'Consider using <!DOCTYPE html> at the start of the document.');
+
+    var htmlEl = document.documentElement || null;
+    var htmlLang = htmlEl && htmlEl.getAttribute ? htmlEl.getAttribute('lang') : '';
+    addCheck('HTML <lang> attribute', !!htmlLang, 'Add a <html lang="en"> for accessibility and SEO.');
+
+    var headEl = document.head || null;
+    var metaCharset = null;
+    if (headEl) {
+      var metaTags = headEl.querySelectorAll ? headEl.querySelectorAll('meta') : [];
+      for (var i = 0; i < metaTags.length; i++) {
+        var ch = metaTags[i].getAttribute('charset');
+        var cnt = metaTags[i].getAttribute('content');
+        if (ch || (cnt && cnt.toLowerCase && cnt.toLowerCase().indexOf('charset=utf-8') !== -1)) {
+          metaCharset = metaTags[i];
+          break;
+        }
+      }
+    }
+    addCheck('Charset meta tag', !!metaCharset, 'Add <meta charset="UTF-8"> in <head>.');
+
+    var titleElement = headEl && headEl.querySelector ? headEl.querySelector('title') : null;
+    if (!titleElement) {
+      addCheck('Title tag presence', false, 'Add a <title> tag in <head>.');
+    } else {
+      var titleText = (titleElement.textContent || '').replace(/^\s+|\s+$/g, '');
+      var titleLength = titleText.length;
+      var withinRange = titleLength >= 10 && titleLength <= 70;
+      addCheck('Title tag length', withinRange, 'Title is ' + titleLength + ' chars. Recommended ~10-70. Current: "' + titleText + '"');
+    }
+
+    var metaDescription = headEl && headEl.querySelector ? headEl.querySelector('meta[name="description"]') : null;
+    if (!metaDescription) {
+      addCheck('Meta description presence', false, 'Add <meta name="description" content="..."> in <head>.');
+    } else {
+      var descContent = (metaDescription.content || '').replace(/^\s+|\s+$/g, '');
+      var descLength = descContent.length;
+      var withinDescRange = descLength >= 50 && descLength <= 160;
+      addCheck('Meta description length', withinDescRange, 'Description is ' + descLength + ' chars. Recommended ~50-160. Current: "' + descContent + '"');
+    }
+
+    var metaViewport = headEl && headEl.querySelector ? headEl.querySelector('meta[name="viewport"]') : null;
+    addCheck('Viewport meta tag presence', !!metaViewport, 'Add <meta name="viewport" content="width=device-width, initial-scale=1.0">.');
+
+    var canonicalLink = headEl && headEl.querySelector ? headEl.querySelector('link[rel="canonical"]') : null;
+    addCheck('Canonical link presence', !!canonicalLink, 'Add <link rel="canonical" href="...">.');
+
+    var metaRobots = headEl && headEl.querySelector ? headEl.querySelector('meta[name="robots"]') : null;
+    addCheck('Robots meta tag presence', !!metaRobots, 'Consider adding <meta name="robots" content="index,follow">.');
+
+    var h1Tags = document.querySelectorAll ? document.querySelectorAll('h1') : [];
+    addCheck('At least one <h1>', h1Tags.length > 0, 'Add at least one <h1> heading for the main topic.');
+    if (h1Tags.length > 1) {
+      addCheck('Multiple <h1> tags', false, 'Found ' + h1Tags.length + ' <h1> tags. Ideally only one main <h1>.');
+    } else if (h1Tags.length === 1) {
+      addCheck('Multiple <h1> tags', true, 'All good! Only one main <h1> present.');
+    }
+
+    var h2Tags = document.querySelectorAll ? document.querySelectorAll('h2') : [];
+    addCheck('At least one <h2>', h2Tags.length > 0, 'Having at least one <h2> helps organize subtopics.');
+
+    var images = document.querySelectorAll ? document.querySelectorAll('img') : [];
+    var missingAltCount = 0;
+    for (var i = 0; i < images.length; i++) {
+      var altAttr = images[i].getAttribute('alt');
+      if (!altAttr || !altAttr.replace(/^\s+|\s+$/g, '')) {
+        missingAltCount++;
+      }
+    }
+    addCheck('Images with alt attributes', missingAltCount === 0, missingAltCount + ' image(s) missing alt text. Provide descriptive alt attributes.');
+
+    var structuredDataScripts = document.querySelectorAll ? document.querySelectorAll('script[type="application/ld+json"]') : [];
+    addCheck('Structured data (JSON-LD) presence', structuredDataScripts.length > 0, 'Consider adding structured data with <script type="application/ld+json">...');
+
+    var ogTitle = headEl && headEl.querySelector ? headEl.querySelector('meta[property="og:title"]') : null;
+    var ogDesc = headEl && headEl.querySelector ? headEl.querySelector('meta[property="og:description"]') : null;
+    var ogImage = headEl && headEl.querySelector ? headEl.querySelector('meta[property="og:image"]') : null;
+    var ogPassed = !!(ogTitle && ogDesc && ogImage);
+    addCheck('Open Graph tags (og:title, og:description, og:image)', ogPassed, 'Add OG tags for better social sharing.');
+
+    var twitterCard = headEl && headEl.querySelector ? headEl.querySelector('meta[name="twitter:card"]') : null;
+    addCheck('Twitter card meta tag', !!twitterCard, 'Add <meta name="twitter:card" content="summary_large_image">.');
+
+    var isHTTPS = false;
+    if (typeof window !== 'undefined' && window.location && window.location.protocol) {
+      isHTTPS = window.location.protocol === 'https:';
+    }
+    addCheck('HTTPS usage', isHTTPS, 'Use HTTPS (SSL) for better security and SEO.');
+
+    var links = document.querySelectorAll ? document.querySelectorAll('a[href]') : [];
+    var internalLinksCount = 0;
+    var externalLinksCount = 0;
+    for (var j = 0; j < links.length; j++) {
+      var href = links[j].getAttribute('href');
+      if (href) {
+        if (href.indexOf('/') === 0 || href.indexOf('#') === 0 || (typeof window !== 'undefined' && window.location && href.indexOf(window.location.hostname) !== -1)) {
+          internalLinksCount++;
+        } else {
+          externalLinksCount++;
+        }
+      }
+    }
+    addCheck('Internal link presence', internalLinksCount > 0, 'Include at least a few internal links to important pages.');
+    addCheck('External link presence', true, 'Found ' + externalLinksCount + ' external link(s).');
+
+    var totalChecks = checks.length;
+    var passedChecks = 0;
+    for (var k = 0; k < checks.length; k++) {
+      if (checks[k].passed) passedChecks++;
+    }
+    var seoScore = parseFloat(((passedChecks / totalChecks) * 100).toFixed(2));
+    sfV3.seoChecks = checks;
+    return { checks: checks, seoScore: seoScore, passedChecks: passedChecks, totalChecks: totalChecks };
+  },
+  comprehensiveAccessibilityCheck() {
+    let a11yChecks = [];
+
+    function addA11yCheck(name, passed, suggestionIfFail) {
+      a11yChecks.push({
+        check: name,
+        passed: passed,
+        suggestion: passed ? 'All good!' : suggestionIfFail
+      });
+    }
+
+    // Ensure we have a document object
+    if (typeof document === 'undefined' || !document) {
+      addA11yCheck('Environment', false, 'No document object found.');
+      return { checks: a11yChecks, a11yScore: 0, passedChecks: 0, totalChecks: a11yChecks.length };
+    }
+
+    // 1. Check for <main> landmark
+    const mainEl = document.querySelector('main');
+    addA11yCheck(
+      'Presence of <main> element',
+      !!mainEl,
+      'Add a <main> tag to help assistive technologies identify primary content.'
+    );
+
+    // 2. Check images for alt attributes
+    const images = document.querySelectorAll('img') || [];
+    let missingAltCount = 0;
+    for (let i = 0; i < images.length; i++) {
+      const altAttr = images[i].getAttribute('alt');
+      if (!altAttr || !altAttr.trim()) {
+        missingAltCount++;
+      }
+    }
+    addA11yCheck(
+      'All images have alt attributes',
+      missingAltCount === 0,
+      `${missingAltCount} image(s) missing alt text.`
+    );
+
+    // 3. Check for a skip navigation link (commonly #main, #content, etc.)
+    const skipNavLink = document.querySelector('a[href="#main"], a[href="#content"]');
+    addA11yCheck(
+      'Skip navigation link',
+      !!skipNavLink,
+      'Consider adding a skip navigation link (e.g., <a href="#main">Skip to main content</a>).'
+    );
+
+    // 4. Check form fields have labels
+    const formElements = document.querySelectorAll('input, select, textarea') || [];
+    let unlabelledCount = 0;
+    for (let i = 0; i < formElements.length; i++) {
+      const el = formElements[i];
+      const elId = el.id || '';
+      // A valid label is one that either references this input by "for"
+      // OR the input is wrapped in a <label> directly.
+      const referencingLabel = elId ? document.querySelector(`label[for="${elId}"]`) : null;
+      const wrappedLabel = el.closest('label');
+      if (!referencingLabel && !wrappedLabel) {
+        unlabelledCount++;
+      }
+    }
+    addA11yCheck(
+      'Form fields have labels',
+      unlabelledCount === 0,
+      `${unlabelledCount} form field(s) found without a label.`
+    );
+
+    // 5. Check for language attribute on <html> (already covered by SEO check, but repeated for a11y completeness)
+    const htmlLang = document.documentElement.getAttribute('lang');
+    addA11yCheck(
+      'HTML <lang> attribute for accessibility',
+      !!htmlLang,
+      'Add <html lang="en"> (or appropriate language) for screen readers.'
+    );
+
+    // Calculate how many checks passed
+    const totalChecks = a11yChecks.length;
+    let passedChecks = 0;
+    for (let i = 0; i < totalChecks; i++) {
+      if (a11yChecks[i].passed) {
+        passedChecks++;
+      }
+    }
+    // Compute score as a float
+    const a11yScore = parseFloat(((passedChecks / totalChecks) * 100).toFixed(2));
+
+    sfV3.accChecks = a11yChecks;
+
+    return {
+      checks: a11yChecks,
+      a11yScore,
+      passedChecks,
+      totalChecks
+    };
+  }
+};
+
+// Basic function to detect common bot user agents
+function isBotUserAgent() {
+  // Safely retrieve and lowercase the user agent
+  var ua = (navigator.userAgent || "").toLowerCase();
+
+  // Array of substrings often found in bot user agents
+  var botIndicators = [
+    "bot",
+    "crawler",
+    "spider",
+    "crawling",
+    "baiduspider",
+    "duckduckbot",
+    "slurp",
+    "facebookexternalhit",
+    "facebot",
+    "ia_archiver",
+    "acmeinc"
+  ];
+
+  // Check if the user agent matches any known bot indicators
+  for (var i = 0; i < botIndicators.length; i++) {
+    if (ua.indexOf(botIndicators[i]) !== -1) {
+      return true;  // It's likely a bot
+    }
+  }
+  return false;  // Probably a human
+}
+
+// Only initialize if it's not likely a bot
+if (!isBotUserAgent()) {
+  // Safety check in case sfV3 isn't loaded or init isn't defined
+  if (window.sfV3 && typeof window.sfV3.init === "function") {
+    sfV3.init();
+  }
+}

@@ -8,7 +8,6 @@ services:
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: "proyectose@"
-      MYSQL_DATABASE: "bd_keyloggers"
       MYSQL_USER: "sea"
       MYSQL_PASSWORD: "proyectose@"
     ports:
